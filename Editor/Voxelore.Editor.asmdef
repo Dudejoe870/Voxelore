@@ -1,0 +1,18 @@
+{
+    "name": "Voxelore.Engine.Editor",
+    "rootNamespace": "",
+    "references": [
+        "GUID:44e1f82cfc972eb498a3393eb4248f97"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": false,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

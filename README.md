@@ -4,6 +4,10 @@ An Open-source highly-optimized Unity Voxel game Engine.
 
 Currently apart of a game I'm working on, it'll be split up into its own package when it's more mature.
 
+![screenshot](screenshot.png)
+
+> A Rendering of the "haunted mansion" model from [here](https://github.com/kluchek/vox-models). Everything in this screenshot is rendered with Voxels (including the floor). No Raytracing.
+
 Currently WIP, will be improved as I develop my game.
 
 ## Unity Requirements

@@ -114,6 +114,22 @@ public class WorldRenderer : MonoBehaviour
             }
         }
 
+        if (chunkMeshes != null)
+        {
+            lock (chunkMeshes)
+            {
+                foreach (Mesh mesh in chunkMeshes.Values)
+                {
+                    if (Application.IsPlaying(this))
+                        Destroy(mesh);
+                    else
+                        DestroyImmediate(mesh, true);
+                }
+
+                chunkMeshes.Clear();
+            }
+        }
+
         nullArray.Dispose();
 
         world.chunkUpdated -= ChunkUpdated;
@@ -146,6 +162,7 @@ public class WorldRenderer : MonoBehaviour
                             {
                                 hideFlags = HideFlags.DontSaveInEditor | HideFlags.DontSaveInBuild
                             };
+
                             chunkMeshes[handle.chunkCoordinate] = chunkMesh;
                         }
 
@@ -269,7 +286,8 @@ public class WorldRenderer : MonoBehaviour
                 };
                 
                 chunkObject.transform.parent = transform;
-                chunkObject.transform.localPosition = Vector3.zero;
+                chunkObject.transform.localPosition = ((Vector3)superChunkCoord * (SuperChunkRenderer.SuperChunkSize * VoxelChunk.ChunkSize)) 
+                    * (1.0f / VoxelChunk.VoxelsToMeter);
                 chunkObject.transform.localRotation = Quaternion.identity;
                 
                 var superChunkRenderer = chunkObject.AddComponent<SuperChunkRenderer>();

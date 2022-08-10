@@ -55,7 +55,7 @@ public class VoxelChunk : IDisposable
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static int GetVoxelIndex(Vector3Int coord)
     {
-        return coord.x + coord.y * ChunkSize + coord.z * ChunkSize * ChunkSize;
+        return coord.x + (coord.y * ChunkSize) + (coord.z * ChunkSlice);
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]

@@ -23,15 +23,9 @@ public class VoxelWorldObject : ScriptableObject
     }
 
 #if UNITY_EDITOR
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public SerializableChunk AddChunk(Vector3Int coordinate, Voxel[] voxels)
+    public IList<SerializableChunk> GetModifiableChunks()
     {
-        SerializableChunk chunk = CreateInstance<SerializableChunk>();
-        chunk.coordinate = coordinate;
-        chunk.voxels = voxels;
-        chunks.Add(chunk);
-        chunkDict.Add(coordinate, chunks.Count - 1);
-        return chunk;
+        return chunks;
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -40,9 +34,18 @@ public class VoxelWorldObject : ScriptableObject
         SerializableChunk chunk = CreateInstance<SerializableChunk>();
         chunk.coordinate = coordinate;
         chunk.voxels = new Voxel[VoxelChunk.ChunkVolume];
+        chunk.initialMesh = new Mesh();
+        chunk.initialMesh.name = $"Chunk Mesh {coordinate}";
         chunks.Add(chunk);
         chunkDict.Add(coordinate, chunks.Count - 1);
         return chunk;
+    }
+
+    public SerializableChunk GetChunk(Vector3Int coordinate)
+    {
+        if (chunkDict.TryGetValue(coordinate, out int index))
+            return chunks[index];
+        return null;
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]

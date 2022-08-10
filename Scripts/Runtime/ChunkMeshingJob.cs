@@ -4,6 +4,7 @@ using Unity.Burst;
 using Unity.Collections;
 using UnityEngine.Rendering;
 using Unity.Jobs;
+using System;
 
 public struct ChunkVertex
 {
@@ -20,6 +21,153 @@ public struct ChunkVertex
     {
         this.position = position;
         this.normal = normal;
+    }
+}
+
+public class RebuildJobHandle : IDisposable
+{
+    public JobHandle handle;
+    public Vector3Int chunkCoordinate;
+    
+    private NativeArray<bool> mask;
+
+    public NativeList<ChunkVertex> vertices;
+    public NativeList<ushort> indices;
+
+    // For the case where we load from a Voxel World Object, we need to be able to Dispose of these arrays.
+    private NativeArray<Voxel>? voxels;
+
+    private NativeArray<Voxel>? negXVoxels;
+    private NativeArray<Voxel>? negYVoxels;
+    private NativeArray<Voxel>? negZVoxels;
+    private NativeArray<Voxel>? posXVoxels;
+    private NativeArray<Voxel>? posYVoxels;
+    private NativeArray<Voxel>? posZVoxels;
+
+    private NativeArray<Voxel> nullArray;
+
+    public bool IsCompleted => handle.IsCompleted;
+
+    public RebuildJobHandle(Vector3Int chunkCoord, VoxelWorld world, NativeArray<Voxel> nullArray, Allocator allocator)
+    {
+        this.nullArray = nullArray;
+
+        chunkCoordinate = chunkCoord;
+
+        mask = new(VoxelChunk.ChunkSlice, allocator, NativeArrayOptions.UninitializedMemory);
+
+        // Initial capacity is just a random number,
+        // but it's based off of the Chunk Size
+        // to ensure consistency if the Chunk Size is altered.
+        vertices = new(VoxelChunk.ChunkVolume / 6, allocator);
+        indices = new(VoxelChunk.ChunkVolume / 6, allocator);
+
+        VoxelChunk negX = world.GetChunk(chunkCoord + new Vector3Int(-1, 0, 0));
+        VoxelChunk posX = world.GetChunk(chunkCoord + new Vector3Int(1, 0, 0));
+        VoxelChunk negY = world.GetChunk(chunkCoord + new Vector3Int(0, -1, 0));
+        VoxelChunk posY = world.GetChunk(chunkCoord + new Vector3Int(0, 1, 0));
+        VoxelChunk negZ = world.GetChunk(chunkCoord + new Vector3Int(0, 0, -1));
+        VoxelChunk posZ = world.GetChunk(chunkCoord + new Vector3Int(0, 0, 1));
+
+        // Keep the fields for these null as we don't want to Dispose of them later in this case.
+        NativeArray<Voxel> negXVoxels = negX?.GetNativeArray() ?? nullArray;
+        NativeArray<Voxel> posXVoxels = posX?.GetNativeArray() ?? nullArray;
+        NativeArray<Voxel> negYVoxels = negY?.GetNativeArray() ?? nullArray;
+        NativeArray<Voxel> posYVoxels = posY?.GetNativeArray() ?? nullArray;
+        NativeArray<Voxel> negZVoxels = negZ?.GetNativeArray() ?? nullArray;
+        NativeArray<Voxel> posZVoxels = posZ?.GetNativeArray() ?? nullArray;
+
+        ChunkMeshingJob job = new(
+            world.GetChunk(chunkCoord).GetNativeArray(),
+            mask, vertices, indices, 1,
+            negXVoxels, posXVoxels, negYVoxels, posYVoxels, negZVoxels, posZVoxels);
+        handle = job.Schedule();
+    }
+
+#if UNITY_EDITOR
+    public RebuildJobHandle(Vector3Int chunkCoord, VoxelWorldObject world, NativeArray<Voxel> nullArray, Allocator allocator)
+    {
+        this.nullArray = nullArray;
+
+        chunkCoordinate = chunkCoord;
+
+        mask = new(VoxelChunk.ChunkSlice, allocator, NativeArrayOptions.UninitializedMemory);
+
+        vertices = new(VoxelChunk.ChunkVolume / 6, allocator);
+        indices = new(VoxelChunk.ChunkVolume / 6, allocator);
+
+        SerializableChunk negX = world.GetChunk(chunkCoord + new Vector3Int(-1, 0, 0));
+        SerializableChunk posX = world.GetChunk(chunkCoord + new Vector3Int(1, 0, 0));
+        SerializableChunk negY = world.GetChunk(chunkCoord + new Vector3Int(0, -1, 0));
+        SerializableChunk posY = world.GetChunk(chunkCoord + new Vector3Int(0, 1, 0));
+        SerializableChunk negZ = world.GetChunk(chunkCoord + new Vector3Int(0, 0, -1));
+        SerializableChunk posZ = world.GetChunk(chunkCoord + new Vector3Int(0, 0, 1));
+        
+        negXVoxels = negX != null ? new NativeArray<Voxel>(negX.voxels, allocator) : nullArray;
+        posXVoxels = posX != null ? new NativeArray<Voxel>(posX.voxels, allocator) : nullArray;
+        negYVoxels = negY != null ? new NativeArray<Voxel>(negY.voxels, allocator) : nullArray;
+        posYVoxels = posY != null ? new NativeArray<Voxel>(posY.voxels, allocator) : nullArray;
+        negZVoxels = negZ != null ? new NativeArray<Voxel>(negZ.voxels, allocator) : nullArray;
+        posZVoxels = posZ != null ? new NativeArray<Voxel>(posZ.voxels, allocator) : nullArray;
+        voxels = new(world.GetChunk(chunkCoord).voxels, allocator);
+        
+        ChunkMeshingJob job = new(
+            voxels.Value,
+            mask, vertices, indices, 1,
+            negXVoxels.Value, posXVoxels.Value, negYVoxels.Value, posYVoxels.Value, negZVoxels.Value, posZVoxels.Value);
+        handle = job.Schedule();
+    }
+#endif
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public void Complete()
+    {
+        handle.Complete();
+    }
+    
+    public void SetupMesh(Mesh chunkMesh, bool upload = false)
+    {
+        chunkMesh.subMeshCount = 1;
+
+        chunkMesh.SetVertexBufferParams(vertices.Length, ChunkVertex.descriptors);
+        chunkMesh.SetIndexBufferParams(indices.Length, IndexFormat.UInt16);
+
+        chunkMesh.SetVertexBufferData<ChunkVertex>(
+            vertices, 0, 0, vertices.Length, 0,
+            MeshUpdateFlags.DontValidateIndices | MeshUpdateFlags.DontRecalculateBounds);
+        chunkMesh.SetIndexBufferData<ushort>(
+            indices, 0, 0, indices.Length,
+            MeshUpdateFlags.DontValidateIndices | MeshUpdateFlags.DontRecalculateBounds);
+
+        chunkMesh.SetSubMesh(0, new SubMeshDescriptor()
+        {
+            topology = MeshTopology.Triangles,
+            vertexCount = vertices.Length,
+            indexCount = indices.Length
+        }, MeshUpdateFlags.DontValidateIndices | MeshUpdateFlags.DontRecalculateBounds);
+
+        if (upload)
+        {
+            chunkMesh.RecalculateBounds();
+            chunkMesh.UploadMeshData(false);
+        }
+    }
+
+    public void Dispose()
+    {
+        vertices.Dispose();
+        indices.Dispose();
+        
+        voxels?.Dispose();
+
+        if (negXVoxels != nullArray) negXVoxels?.Dispose();
+        if (posXVoxels != nullArray) posXVoxels?.Dispose();
+        if (negYVoxels != nullArray) negYVoxels?.Dispose();
+        if (posYVoxels != nullArray) posYVoxels?.Dispose();
+        if (negZVoxels != nullArray) negZVoxels?.Dispose();
+        if (posZVoxels != nullArray) posZVoxels?.Dispose();
+
+        mask.Dispose();
     }
 }
 

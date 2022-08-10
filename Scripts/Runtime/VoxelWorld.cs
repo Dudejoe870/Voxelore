@@ -13,7 +13,7 @@ public class VoxelWorld : MonoBehaviour
     public VoxelWorldObject worldAsset;
 
     [NonSerialized]
-    public Action<Vector3Int> chunkUpdated;
+    public Action<Vector3Int, Mesh> chunkUpdated;
 
     [NonSerialized]
     public Action<Vector3Int> chunkDeleted;
@@ -82,7 +82,7 @@ public class VoxelWorld : MonoBehaviour
         {
             VoxelChunk voxelChunk = new(chunk.coordinate, chunk.voxels);
             AddChunk(voxelChunk);
-            chunkUpdated?.Invoke(chunk.coordinate);
+            chunkUpdated?.Invoke(chunk.coordinate, chunk.initialMesh);
         }
     }
 
@@ -111,10 +111,10 @@ public class VoxelWorld : MonoBehaviour
         lock (chunks)
             chunks.TryAdd(chunk.coordinate, chunk);
     }
-
+    
     private void ChunkModified(VoxelChunk chunk)
     {
-        chunkUpdated?.Invoke(chunk.coordinate);
+        chunkUpdated?.Invoke(chunk.coordinate, null);
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]

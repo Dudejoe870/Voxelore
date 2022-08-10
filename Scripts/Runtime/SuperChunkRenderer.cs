@@ -28,7 +28,8 @@ public class SuperChunkRenderer : MonoBehaviour
 
     private Texture3D chunkMapTexture;
     private Texture2DArray chunkDataTexture;
-    private int firstFreeDataElement;
+    private int lastFreedDataElement;
+    private Queue<int> freedDataElements;
 
     private bool meshDirty;
 
@@ -58,7 +59,7 @@ public class SuperChunkRenderer : MonoBehaviour
         };
         material.SetTexture("_ChunkMap", chunkMapTexture);
 
-        firstFreeDataElement = 0;
+        lastFreedDataElement = 0;
         meshDirty = false;
 
         material.SetFloat("_SuperChunkSize", SuperChunkSize);
@@ -66,6 +67,7 @@ public class SuperChunkRenderer : MonoBehaviour
 
         chunkMeshes = new(SuperChunkVolume);
         chunkIndexes = new(SuperChunkVolume);
+        freedDataElements = new();
 
         meshRenderer.sharedMaterial = material;
 
@@ -124,8 +126,8 @@ public class SuperChunkRenderer : MonoBehaviour
             chunkMeshes[coord] = mesh;
             if (!chunkIndexes.TryGetValue(coord, out int chunkIndex))
             {
-                chunkIndex = firstFreeDataElement;
-                firstFreeDataElement = chunkMeshes.Count;
+                chunkIndex = lastFreedDataElement;
+                lastFreedDataElement = freedDataElements.Count > 0 ? freedDataElements.Dequeue() : chunkMeshes.Count;
 
                 chunkIndexes[coord] = chunkIndex;
             }
@@ -182,8 +184,12 @@ public class SuperChunkRenderer : MonoBehaviour
         if (superChunkCoord == superChunkCoordinate)
         {
             chunkMeshes.Remove(coord);
-            firstFreeDataElement = chunkIndexes[coord];
-            chunkIndexes.Remove(coord);
+            if (chunkIndexes.TryGetValue(coord, out int chunkIndex))
+            {
+                freedDataElements.Enqueue(chunkIndex);
+                lastFreedDataElement = chunkIndex;
+                chunkIndexes.Remove(coord);
+            }
 
             meshDirty = true;
         }

@@ -31,36 +31,17 @@ public class WorldRenderer : MonoBehaviour
     public VoxelWorld world;
 
     private HashSet<Vector3Int> rebuildQueue;
-    private Dictionary<Vector3Int, RebuildJobHandle> currentRebuildJobs;
+    private Dictionary<Vector3Int, WorldRebuildJobHandle> currentRebuildJobs;
 
     private NativeArray<Voxel> nullArray;
 
-    private class RebuildJobHandle : IDisposable
+    private class WorldRebuildJobHandle : RebuildJobHandle
     {
         public int lifeTime = 0;
-
-        public JobHandle handle;
-        public Vector3Int chunkCoordinate;
-
-        public NativeArray<bool> mask;
-
-        public NativeList<ChunkVertex> vertices;
-        public NativeList<ushort> indices;
-
-        public bool IsCompleted => handle.IsCompleted;
-
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public void Complete()
+        
+        public WorldRebuildJobHandle(Vector3Int chunkCoord, VoxelWorld world, NativeArray<Voxel> nullArray, Allocator allocator) 
+            : base(chunkCoord, world, nullArray, allocator)
         {
-            handle.Complete();
-        }
-
-        public void Dispose()
-        {
-            vertices.Dispose();
-            indices.Dispose();
-
-            mask.Dispose();
         }
     }
 
@@ -144,10 +125,10 @@ public class WorldRenderer : MonoBehaviour
         {
             lock (currentRebuildJobs)
             {
-                RebuildJobHandle[] valuesCopy = new RebuildJobHandle[currentRebuildJobs.Count];
+                WorldRebuildJobHandle[] valuesCopy = new WorldRebuildJobHandle[currentRebuildJobs.Count];
                 currentRebuildJobs.Values.CopyTo(valuesCopy, 0);
 
-                foreach (RebuildJobHandle handle in valuesCopy)
+                foreach (WorldRebuildJobHandle handle in valuesCopy)
                 {
                     // Make sure the frame lifetime is not exceeded as we use the TempJob allocator
                     // which only allows 4 frames to pass before deallocation.
@@ -168,26 +149,7 @@ public class WorldRenderer : MonoBehaviour
 
                         chunkMesh.hideFlags = HideFlags.DontSaveInBuild | HideFlags.DontSaveInEditor;
 
-                        chunkMesh.subMeshCount = 1;
-
-                        chunkMesh.SetVertexBufferParams(handle.vertices.Length, ChunkVertex.descriptors);
-                        chunkMesh.SetIndexBufferParams(handle.indices.Length, IndexFormat.UInt16);
-
-                        chunkMesh.SetVertexBufferData<ChunkVertex>(
-                            handle.vertices, 0, 0, handle.vertices.Length, 0,
-                            MeshUpdateFlags.DontValidateIndices | MeshUpdateFlags.DontRecalculateBounds);
-                        chunkMesh.SetIndexBufferData<ushort>(
-                            handle.indices, 0, 0, handle.indices.Length,
-                            MeshUpdateFlags.DontValidateIndices | MeshUpdateFlags.DontRecalculateBounds);
-
-                        chunkMesh.SetSubMesh(0, new SubMeshDescriptor()
-                        {
-                            topology = MeshTopology.Triangles,
-                            vertexCount = handle.vertices.Length,
-                            indexCount = handle.indices.Length
-                        }, MeshUpdateFlags.DontValidateIndices | MeshUpdateFlags.DontRecalculateBounds);
-
-                        // No need to upload the the GPU as these meshes get combined into Super Chunks later on.
+                        handle.SetupMesh(chunkMesh);
 
                         chunkMeshUpdated?.Invoke(handle.chunkCoordinate, chunkMesh);
 
@@ -209,53 +171,19 @@ public class WorldRenderer : MonoBehaviour
         {
             lock (rebuildQueue)
             {
-                int index = 0;
                 foreach (Vector3Int chunkCoord in rebuildQueue)
                 {
-                    if (currentRebuildJobs.TryGetValue(chunkCoord, out RebuildJobHandle currentJob))
+                    if (currentRebuildJobs.TryGetValue(chunkCoord, out WorldRebuildJobHandle currentJob))
                     {
                         currentJob.Complete();
                         currentJob.Dispose();
                         
                         currentRebuildJobs.Remove(chunkCoord);
                     }
-
-                    NativeArray<bool> mask = new(VoxelChunk.ChunkSlice, Allocator.TempJob, NativeArrayOptions.UninitializedMemory);
-
-                    // Initial capacity is just a random number,
-                    // but it's based off of the Chunk Size
-                    // to ensure consistency if the Chunk Size is altered.
-                    NativeList<ChunkVertex> vertices = new(VoxelChunk.ChunkVolume / 6, Allocator.TempJob);
-                    NativeList<ushort> indices = new(VoxelChunk.ChunkVolume / 6, Allocator.TempJob);
-
-                    VoxelChunk negX = world.GetChunk(chunkCoord + new Vector3Int(-1,  0,  0));
-                    VoxelChunk posX = world.GetChunk(chunkCoord + new Vector3Int( 1,  0,  0));
-                    VoxelChunk negY = world.GetChunk(chunkCoord + new Vector3Int( 0, -1,  0));
-                    VoxelChunk posY = world.GetChunk(chunkCoord + new Vector3Int( 0,  1,  0));
-                    VoxelChunk negZ = world.GetChunk(chunkCoord + new Vector3Int( 0,  0, -1));
-                    VoxelChunk posZ = world.GetChunk(chunkCoord + new Vector3Int( 0,  0,  1));
-
-                    NativeArray<Voxel> negXVoxels = negX?.GetNativeArray() ?? nullArray;
-                    NativeArray<Voxel> posXVoxels = posX?.GetNativeArray() ?? nullArray;
-                    NativeArray<Voxel> negYVoxels = negY?.GetNativeArray() ?? nullArray;
-                    NativeArray<Voxel> posYVoxels = posY?.GetNativeArray() ?? nullArray;
-                    NativeArray<Voxel> negZVoxels = negZ?.GetNativeArray() ?? nullArray;
-                    NativeArray<Voxel> posZVoxels = posZ?.GetNativeArray() ?? nullArray;
-
-                    ChunkMeshingJob job = new(
-                        world.GetChunk(chunkCoord).GetNativeArray(),
-                        mask, vertices, indices, 1,
-                        negXVoxels, posXVoxels, negYVoxels, posYVoxels, negZVoxels, posZVoxels);
+                    
                     lock (currentRebuildJobs)
-                        currentRebuildJobs.Add(chunkCoord, new RebuildJobHandle()
-                        {
-                            handle = job.Schedule(),
-                            chunkCoordinate = chunkCoord,
-                            vertices = vertices,
-                            indices = indices,
-                            mask = mask
-                        });
-                    ++index;
+                        currentRebuildJobs.Add(chunkCoord, 
+                            new WorldRebuildJobHandle(chunkCoord, world, nullArray, Allocator.TempJob));
                 }
                 JobHandle.ScheduleBatchedJobs();
 
@@ -270,11 +198,8 @@ public class WorldRenderer : MonoBehaviour
         SchedulePendingChunksForRebuild();
     }
 
-    private void ChunkUpdated(Vector3Int chunkCoord)
+    private void ChunkUpdated(Vector3Int chunkCoord, Mesh initialMesh)
     {
-        lock (rebuildQueue)
-            rebuildQueue.Add(chunkCoord);
-
         lock (superChunkRenderers)
         {
             Vector3Int superChunkCoord = Vector3Int.FloorToInt((Vector3)chunkCoord / SuperChunkRenderer.SuperChunkSize);
@@ -284,12 +209,12 @@ public class WorldRenderer : MonoBehaviour
                 {
                     hideFlags = HideFlags.DontSaveInBuild | HideFlags.DontSaveInEditor | HideFlags.NotEditable
                 };
-                
+
                 chunkObject.transform.parent = transform;
-                chunkObject.transform.localPosition = ((Vector3)superChunkCoord * (SuperChunkRenderer.SuperChunkSize * VoxelChunk.ChunkSize)) 
+                chunkObject.transform.localPosition = ((Vector3)superChunkCoord * (SuperChunkRenderer.SuperChunkSize * VoxelChunk.ChunkSize))
                     * (1.0f / VoxelChunk.VoxelsToMeter);
                 chunkObject.transform.localRotation = Quaternion.identity;
-                
+
                 var superChunkRenderer = chunkObject.AddComponent<SuperChunkRenderer>();
                 superChunkRenderer.superChunkCoordinate = superChunkCoord;
                 superChunkRenderer.worldRenderer = this;
@@ -297,6 +222,17 @@ public class WorldRenderer : MonoBehaviour
 
                 superChunkRenderers[superChunkCoord] = superChunkRenderer;
             }
+        }
+
+        if (initialMesh != null)
+        {
+            chunkMeshes[chunkCoord] = initialMesh;
+            chunkMeshUpdated?.Invoke(chunkCoord, initialMesh);
+        }
+        else
+        {
+            lock (rebuildQueue)
+                rebuildQueue.Add(chunkCoord);
         }
     }
 

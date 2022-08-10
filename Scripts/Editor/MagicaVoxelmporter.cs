@@ -2,6 +2,8 @@
 using System.IO;
 using System.Runtime.CompilerServices;
 using System.Text;
+using Unity.Collections;
+using Unity.Jobs;
 using UnityEditor.AssetImporters;
 using UnityEngine;
 
@@ -349,7 +351,7 @@ public class MagicaVoxelmporter : ScriptedImporter
                         SerializableChunk addedChunk = vwo.SetVoxel(new Vector3Int(coord.x, coord.z, coord.y), new Voxel(color));
                         if (addedChunk != null)
                         {
-                            addedChunk.hideFlags = HideFlags.HideInInspector | HideFlags.NotEditable;
+                            addedChunk.hideFlags = HideFlags.NotEditable;
                             addedChunk.name = $"Chunk {addedChunk.coordinate}";
                             assetCtx.AddObjectToAsset(
                                 $"chunk_{addedChunk.coordinate.x}_{addedChunk.coordinate.y}_{addedChunk.coordinate.z}", addedChunk);
@@ -486,7 +488,24 @@ public class MagicaVoxelmporter : ScriptedImporter
         }
 
         ProcessGraphNode(sceneGraphRoot, ctx, importCtx, vwo, Matrix4x4.identity, true);
-        
+
+        List<(RebuildJobHandle, SerializableChunk)> rebuildJobs = new();
+        NativeArray<Voxel> nullArray = new(0, Allocator.TempJob, 
+            NativeArrayOptions.UninitializedMemory);
+        foreach (SerializableChunk chunk in vwo.GetModifiableChunks())
+            rebuildJobs.Add((new RebuildJobHandle(chunk.coordinate, vwo, nullArray, Allocator.TempJob), chunk));
+        JobHandle.ScheduleBatchedJobs();
+
+        foreach ((RebuildJobHandle, SerializableChunk) rebuildJob in rebuildJobs)
+        {
+            rebuildJob.Item1.Complete();
+            rebuildJob.Item1.SetupMesh(rebuildJob.Item2.initialMesh, true);
+            ctx.AddObjectToAsset($"mesh_{rebuildJob.Item2.coordinate.x}_{rebuildJob.Item2.coordinate.y}_{rebuildJob.Item2.coordinate.z}", 
+                rebuildJob.Item2.initialMesh);
+            rebuildJob.Item1.Dispose();
+        }
+        nullArray.Dispose();
+
         ctx.AddObjectToAsset("level", vwo);
         ctx.SetMainObject(vwo);
     }
